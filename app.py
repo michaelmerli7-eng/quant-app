@@ -52,14 +52,12 @@ if len(tickers_list) < 2:
 # --- SCARICAMENTO DATI (25 ANNI) ---
 @st.cache_data
 def carica_dati(tickers):
-    # Scarica fino a 25 anni di dati storici
     df = yf.download(tickers, period="25y")['Close'].ffill().bfill()
     return df
 
 dati = carica_dati(tickers_list)
 
 # --- CALCOLO MOMENTUM E SEGNALE ATTUALE ---
-# Protezione per strumenti con storico inferiore alla finestra selezionata
 effettivi_giorni = min(lookback_giorni, len(dati) - 1)
 
 prezzo_oggi = dati.iloc[-1]
@@ -76,15 +74,45 @@ df_mom["Asset"] = df_mom["Ticker"].map(lambda x: inverso_dict.get(x, x))
 
 vincitore = df_mom.iloc[0]
 
-# --- DISPLAY SEGNALE ---
-col1, col2 = st.columns([1, 2])
+# --- DISPLAY SEGNALI OPERATIVI (COMPRA VS VENDI) ---
+col1, col2 = st.columns([1.2, 1.8])
 
 with col1:
-    st.subheader("📌 Segnale Operativo Oggi")
-    if vincitore["Rendimento Momentum (%)"] > 0:
-        st.success(f"**COMPRA / TIENI:**\n### {vincitore['Asset']}\n(Momentum a {periodo_mesi}M: +{vincitore['Rendimento Momentum (%)']:.2f}%)")
-    else:
-        st.error("**SEGNALE DI PROTEZIONE:**\nTutti gli asset sono in territorio negativo. **Stai in Liquidità / Cash**.")
+    st.subheader("📌 Segnali Operativi Oggi")
+    
+    subcol1, subcol2 = st.columns(2)
+    
+    # 🟢 Riquadro COMPRA / TIENI
+    with subcol1:
+        if vincitore["Rendimento Momentum (%)"] > 0:
+            st.success(
+                f"**🟢 COMPRA / TIENI**\n\n"
+                f"### {vincitore['Asset']}\n\n"
+                f"*(Momentum: +{vincitore['Rendimento Momentum (%)']:.2f}%)*"
+            )
+        else:
+            st.info(
+                f"**🟢 COMPRA / TIENI**\n\n"
+                f"### 💵 Liquidità / Cash\n\n"
+                f"*(Protezione attiva)*"
+            )
+
+    # 🔴 Riquadro VENDI / EVITA
+    with subcol2:
+        if vincitore["Rendimento Momentum (%)"] > 0:
+            da_vendere = df_mom.iloc[1:]
+            elenco_vendi = "\n".join([f"• **{row['Asset']}** ({row['Rendimento Momentum (%)']:+.2f}%)" for _, row in da_vendere.iterrows()])
+            st.error(
+                f"**🔴 VENDI / EVITA**\n\n"
+                f"{elenco_vendi}"
+            )
+        else:
+            da_vendere = df_mom
+            elenco_vendi = "\n".join([f"• **{row['Asset']}** ({row['Rendimento Momentum (%)']:+.2f}%)" for _, row in da_vendere.iterrows()])
+            st.error(
+                f"**🔴 VENDI / EVITA**\n\n"
+                f"{elenco_vendi}"
+            )
 
     st.subheader(f"🏆 Classifica Forza Relativa ({periodo_mesi} Mesi)")
     st.dataframe(df_mom[["Asset", "Rendimento Momentum (%)"]].style.format({"Rendimento Momentum (%)": "{:+.2f}%"}), use_container_width=True)
@@ -107,7 +135,7 @@ with col2:
     fig.update_layout(
         xaxis_title="Data", 
         yaxis_title="Rendimento Relativo (Base 100)", 
-        height=450, 
+        height=480, 
         margin=dict(l=20, r=20, t=30, b=20)
     )
     st.plotly_chart(fig, use_container_width=True)
