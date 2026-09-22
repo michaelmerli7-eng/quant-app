@@ -11,8 +11,15 @@ st.markdown("Analisi di Forza Relativa e Rotazione Quantitativa del Capitale")
 # --- SIDEBAR: PARAMETRI PERSONALIZZABILI ---
 st.sidebar.header("⚙️ Configurazione Strategia")
 
-periodo_mesi = st.sidebar.slider("Finestra temporale Momentum (Mesi):", min_value=1, max_value=12, value=3)
-lookback_giorni = periodo_mesi * 21 
+# Slider esteso fino a 25 anni (300 mesi)
+periodo_mesi = st.sidebar.slider(
+    "Finestra temporale Momentum (Mesi):", 
+    min_value=1, 
+    max_value=300, 
+    value=3,
+    help="Seleziona la finestra temporale da 1 mese fino a 25 anni (300 mesi)"
+)
+lookback_giorni = periodo_mesi * 21  # circa 21 giorni di borsa al mese
 
 st.sidebar.subheader("Paniere Strumenti")
 preset_tickers = {
@@ -42,17 +49,21 @@ if len(tickers_list) < 2:
     st.warning("Seleziona almeno 2 strumenti per calcolare la rotazione.")
     st.stop()
 
-# --- SCARICAMENTO DATI ---
+# --- SCARICAMENTO DATI (25 ANNI) ---
 @st.cache_data
 def carica_dati(tickers):
-    df = yf.download(tickers, period="3y")['Close'].ffill().bfill()
+    # Scarica fino a 25 anni di dati storici
+    df = yf.download(tickers, period="25y")['Close'].ffill().bfill()
     return df
 
 dati = carica_dati(tickers_list)
 
 # --- CALCOLO MOMENTUM E SEGNALE ATTUALE ---
+# Protezione per strumenti con storico inferiore alla finestra selezionata
+effettivi_giorni = min(lookback_giorni, len(dati) - 1)
+
 prezzo_oggi = dati.iloc[-1]
-prezzo_passato = dati.iloc[-min(lookback_giorni, len(dati)-1)]
+prezzo_passato = dati.iloc[-effettivi_giorni]
 momentum = ((prezzo_oggi / prezzo_passato) - 1) * 100
 
 df_mom = pd.DataFrame({
@@ -81,12 +92,22 @@ with col1:
 # --- GRAFICO INTERATTIVO ---
 with col2:
     st.subheader("📈 Grafico Forza Relativa Normalizzata (Base 100)")
-    dati_norm = (dati / dati.iloc[-lookback_giorni]) * 100
+    dati_norm = (dati / dati.iloc[-effettivi_giorni]) * 100
     
     fig = go.Figure()
     for t in tickers_list:
         nome = inverso_dict.get(t, t)
-        fig.add_trace(go.Scatter(x=dati_norm.index[-lookback_giorni:], y=dati_norm[t].iloc[-lookback_giorni:], mode='lines', name=nome))
+        fig.add_trace(go.Scatter(
+            x=dati_norm.index[-effettivi_giorni:], 
+            y=dati_norm[t].iloc[-effettivi_giorni:], 
+            mode='lines', 
+            name=nome
+        ))
 
-    fig.update_layout(xaxis_title="Data", yaxis_title="Rendimento Relativo (Base 100)", height=450, margin=dict(l=20, r=20, t=30, b=20))
+    fig.update_layout(
+        xaxis_title="Data", 
+        yaxis_title="Rendimento Relativo (Base 100)", 
+        height=450, 
+        margin=dict(l=20, r=20, t=30, b=20)
+    )
     st.plotly_chart(fig, use_container_width=True)
