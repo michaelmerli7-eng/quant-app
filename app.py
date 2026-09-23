@@ -2,10 +2,16 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
 
 # Configurazione della pagina
 st.set_page_config(page_title="Quant Finance Suite", layout="wide")
+
+# --- FUNZIONE CARICAMENTO DATI ---
+@st.cache_data
+def carica_dati(tickers):
+    df = yf.download(tickers, period="25y")['Close'].ffill().bfill()
+    return df
+
 st.title("⚡ Quant Finance Suite")
 st.markdown("Piattaforma Integrata per l'Analisi e la Gestione Quantitativa del Portafoglio")
 
@@ -60,11 +66,6 @@ with tab1:
     if len(tickers_list) < 2:
         st.warning("Seleziona almeno 2 strumenti nella barra laterale per calcolare la rotazione.")
     else:
-        @st.cache_data
-        def carica_dati(tickers):
-            df = yf.download(tickers, period="25y")['Close'].ffill().bfill()
-            return df
-
         dati = carica_dati(tickers_list)
 
         effettivi_giorni = min(lookback_giorni, len(dati) - 1)
@@ -150,7 +151,6 @@ with tab2:
         
         nuova_liquidita = st.number_input("Nuova Liquidità da aggiungere (€):", min_value=0.0, value=0.0, step=100.0)
 
-        # Tabella predefinita modificabile
         dati_iniziali = pd.DataFrame([
             {"Asset": "Azioni Globali (SWDA.MI)", "Valore Attuale (€)": 5000.0, "Target (%)": 40.0},
             {"Asset": "Obbligazioni Globali (AGGH.MI)", "Valore Attuale (€)": 3000.0, "Target (%)": 30.0},
@@ -184,7 +184,6 @@ with tab2:
             delta=f"+{nuova_liquidita:,.2f} € liquidità" if nuova_liquidita > 0 else None
         )
 
-        # Calcolo operatività
         df_calc = edited_df.copy()
         df_calc["Target (€)"] = (df_calc["Target (%)"] / 100.0) * valore_portafoglio_totale
         df_calc["Aggiustamento (€)"] = df_calc["Target (€)"] - df_calc["Valore Attuale (€)"]
@@ -211,7 +210,6 @@ with tab2:
             }
         )
 
-        # Grafico a barre di confronto
         fig_reb = go.Figure()
         fig_reb.add_trace(go.Bar(x=df_calc["Asset"], y=df_calc["Attuale (%)"], name="Attuale (%)", marker_color="royalblue"))
         fig_reb.add_trace(go.Bar(x=df_calc["Asset"], y=df_calc["Target (%)"], name="Target (%)", marker_color="mediumseagreen"))
@@ -233,7 +231,3 @@ with tab4:
 with tab5:
     st.header("🔍 Market Scanner")
     st.info("Questa funzionalità verrà sviluppata nello Step successivo!")
-        height=480, 
-        margin=dict(l=20, r=20, t=30, b=20)
-    )
-    st.plotly_chart(fig, use_container_width=True)
