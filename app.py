@@ -144,19 +144,38 @@ with tab2:
     st.header("⚖️ Calcolatore Ribilanciamento Portafoglio")
     st.markdown("Inserisci il valore attuale del tuo portafoglio e i tuoi target ideali per calcolare le operazioni da eseguire.")
 
+    # --- SEZIONE CARICAMENTO/SALVATAGGIO CSV ---
+    col_csv1, col_csv2 = st.columns([1.5, 1])
+
+    # Dati di default in caso di primo avvio senza file
+    dati_iniziali = pd.DataFrame([
+        {"Asset": "Azioni Globali (SWDA.MI)", "Valore Attuale (€)": 5000.0, "Target (%)": 40.0},
+        {"Asset": "Obbligazioni Globali (AGGH.MI)", "Valore Attuale (€)": 3000.0, "Target (%)": 30.0},
+        {"Asset": "Oro (GLD)", "Valore Attuale (€)": 1000.0, "Target (%)": 15.0},
+        {"Asset": "Bitcoin (BTC-USD)", "Valore Attuale (€)": 1000.0, "Target (%)": 15.0},
+    ])
+
+    with col_csv1:
+        uploaded_file = st.file_uploader("📂 Carica il tuo portafoglio salvato (.CSV)", type=["csv"])
+
+    if uploaded_file is not None:
+        try:
+            dati_caricati = pd.read_csv(uploaded_file)
+            colonne_richieste = {"Asset", "Valore Attuale (€)", "Target (%)"}
+            if colonne_richieste.issubset(dati_caricati.columns):
+                dati_iniziali = dati_caricati
+                st.success("✅ Portafoglio caricato con successo!")
+            else:
+                st.error("⚠️ Il file CSV non contiene le colonne corrette: Asset, Valore Attuale (€), Target (%)")
+        except Exception as e:
+            st.error(f"⚠️ Errore nella lettura del file CSV: {e}")
+
     col_reb1, col_reb2 = st.columns([1.3, 1.7])
 
     with col_reb1:
         st.subheader("1. Modifica Valori e % Target")
         
         nuova_liquidita = st.number_input("Nuova Liquidità da aggiungere (€):", min_value=0.0, value=0.0, step=100.0)
-
-        dati_iniziali = pd.DataFrame([
-            {"Asset": "Azioni Globali (SWDA.MI)", "Valore Attuale (€)": 5000.0, "Target (%)": 40.0},
-            {"Asset": "Obbligazioni Globali (AGGH.MI)", "Valore Attuale (€)": 3000.0, "Target (%)": 30.0},
-            {"Asset": "Oro (GLD)", "Valore Attuale (€)": 1000.0, "Target (%)": 15.0},
-            {"Asset": "Bitcoin (BTC-USD)", "Valore Attuale (€)": 1000.0, "Target (%)": 15.0},
-        ])
 
         edited_df = st.data_editor(
             dati_iniziali,
@@ -166,6 +185,16 @@ with tab2:
                 "Valore Attuale (€)": st.column_config.NumberColumn(format="%.2f €"),
                 "Target (%)": st.column_config.NumberColumn(format="%.1f %%", min_value=0.0, max_value=100.0)
             }
+        )
+
+        # Pulsante per scaricare i dati correnti in CSV
+        csv_data = edited_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="💾 Scarica/Salva Portafoglio in CSV",
+            data=csv_data,
+            file_name="mio_portafoglio.csv",
+            mime="text/csv",
+            help="Clicca qui per scaricare un file con la tua configurazione attuale. Potrai ricaricarlo la prossima volta!"
         )
 
         somma_target = edited_df["Target (%)"].sum()
