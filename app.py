@@ -1,6 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 
 # Configurazione della pagina
@@ -12,6 +13,16 @@ def carica_dati(tickers):
     df = yf.download(tickers, period="25y")['Close'].ffill().bfill()
     return df
 
+# --- PANIERE STRUMENTI PREDEFINITI (CONDIVISO) ---
+preset_tickers = {
+    "Azioni Globali (SWDA.MI)": "SWDA.MI",
+    "Oro (GLD)": "GLD",
+    "Bitcoin (BTC-USD)": "BTC-USD",
+    "Obbligazioni Globali (AGGH.MI)": "AGGH.MI",
+    "S&P 500 (CSSPX.MI)": "CSSPX.MI",
+    "Tech / Nasdaq (EQQQ.MI)": "EQQQ.MI"
+}
+
 st.title("⚡ Quant Finance Suite")
 st.markdown("Piattaforma Integrata per l'Analisi e la Gestione Quantitativa del Portafoglio")
 
@@ -19,7 +30,7 @@ st.markdown("Piattaforma Integrata per l'Analisi e la Gestione Quantitativa del 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "⚡ Rotazione Momentum", 
     "⚖️ Ribilanciamento Portafoglio", 
-    "📊 Rischio & Correlazione (In Sviluppo)", 
+    "📊 Rischio & Correlazione", 
     "📈 Simulatore PAC (In Sviluppo)", 
     "🔍 Market Scanner (In Sviluppo)"
 ])
@@ -39,16 +50,7 @@ with tab1:
     )
     lookback_giorni = periodo_mesi * 21  
 
-    st.sidebar.subheader("Paniere Strumenti")
-    preset_tickers = {
-        "Azioni Globali (SWDA.MI)": "SWDA.MI",
-        "Oro (GLD)": "GLD",
-        "Bitcoin (BTC-USD)": "BTC-USD",
-        "Obbligazioni Globali (AGGH.MI)": "AGGH.MI",
-        "S&P 500 (CSSPX.MI)": "CSSPX.MI",
-        "Tech / Nasdaq (EQQQ.MI)": "EQQQ.MI"
-    }
-
+    st.sidebar.subheader("Paniere Strumenti Momentum")
     scelti = st.sidebar.multiselect(
         "Seleziona o rimuovi strumenti dal paniere:",
         options=list(preset_tickers.keys()),
@@ -57,7 +59,7 @@ with tab1:
 
     custom_ticker = st.sidebar.text_input("Aggiungi Ticker personalizzato (es. NVDA, AAPL, XLU):", "")
 
-    tickers_dict = {k: preset_tickers[k] for k in scelti}
+    tickers_dict = {k: preset_tickers[k] for k in scelti if k in preset_tickers}
     if custom_ticker.strip():
         tickers_dict[custom_ticker.upper()] = custom_ticker.upper()
 
@@ -144,10 +146,8 @@ with tab2:
     st.header("⚖️ Calcolatore Ribilanciamento Portafoglio")
     st.markdown("Inserisci il valore attuale del tuo portafoglio e i tuoi target ideali per calcolare le operazioni da eseguire.")
 
-    # --- SEZIONE CARICAMENTO/SALVATAGGIO CSV ---
     col_csv1, col_csv2 = st.columns([1.5, 1])
 
-    # Dati di default in caso di primo avvio senza file
     dati_iniziali = pd.DataFrame([
         {"Asset": "Azioni Globali (SWDA.MI)", "Valore Attuale (€)": 5000.0, "Target (%)": 40.0},
         {"Asset": "Obbligazioni Globali (AGGH.MI)", "Valore Attuale (€)": 3000.0, "Target (%)": 30.0},
@@ -187,14 +187,13 @@ with tab2:
             }
         )
 
-        # Pulsante per scaricare i dati correnti in CSV
         csv_data = edited_df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="💾 Scarica/Salva Portafoglio in CSV",
             data=csv_data,
             file_name="mio_portafoglio.csv",
             mime="text/csv",
-            help="Clicca qui per scaricare un file con la tua configurazione attuale. Potrai ricaricarlo la prossima volta!"
+            help="Scarica un file CSV con la tua configurazione per ricaricarlo la prossima volta."
         )
 
         somma_target = edited_df["Target (%)"].sum()
@@ -247,12 +246,107 @@ with tab2:
 
 
 # ==============================================================================
-# TAB 3, 4, 5: PLACEHOLDER PER PROGETTI FUTURI
+# TAB 3: RISCHIO & CORRELAZIONE
 # ==============================================================================
 with tab3:
-    st.header("📊 Matrice di Correlazione e Analisi del Rischio")
-    st.info("Questa funzionalità verrà sviluppata nello Step successivo!")
+    st.header("📊 Analisi Rischio & Matrice di Correlazione")
+    st.markdown("Valuta la diversificazione del portafoglio, la volatilità storica e le metriche di rischio degli strumenti.")
 
+    st.sidebar.subheader("⚙️ Configurazione Rischio")
+    anni_rischio = st.sidebar.slider("Periodo Storico Analisi (Anni):", min_value=1, max_value=20, value=5)
+    rf_rate = st.sidebar.number_input("Tasso Risk-Free Annuo / BTP (%)", min_value=0.0, max_value=10.0, value=2.5, step=0.1) / 100.0
+
+    scelti_risk = st.sidebar.multiselect(
+        "Strumenti da analizzare:",
+        options=list(preset_tickers.keys()),
+        default=["Azioni Globali (SWDA.MI)", "Oro (GLD)", "Bitcoin (BTC-USD)", "Obbligazioni Globali (AGGH.MI)", "Tech / Nasdaq (EQQQ.MI)"],
+        key="risk_multiselect"
+    )
+
+    tickers_risk_dict = {k: preset_tickers[k] for k in scelti_risk if k in preset_tickers}
+    tickers_risk_list = list(tickers_risk_dict.values())
+
+    if len(tickers_risk_list) < 2:
+        st.warning("Seleziona almeno 2 strumenti nella barra laterale per calcolare correlazione e rischio.")
+    else:
+        dati_risk_full = carica_dati(tickers_risk_list)
+        
+        # Filtra dati per il periodo selezionato
+        giorni_filtro = anni_rischio * 252
+        dati_risk = dati_risk_full.iloc[-giorni_filtro:]
+
+        # Calcolo rendimenti giornalieri
+        rendimenti = dati_risk.pct_change().dropna()
+
+        # Mappatura nomi trasparenti
+        inv_map_risk = {v: k for k, v in tickers_risk_dict.items()}
+        rendimenti.columns = [inv_map_risk.get(col, col) for col in rendimenti.columns]
+        dati_risk.columns = [inv_map_risk.get(col, col) for col in dati_risk.columns]
+
+        # 1. Matrice di Correlazione
+        matrice_corr = rendimenti.corr()
+
+        col_risk1, col_risk2 = st.columns([1.3, 1.7])
+
+        with col_risk1:
+            st.subheader("🔥 Matrice di Correlazione")
+            
+            fig_corr = go.Figure(data=go.Heatmap(
+                z=matrice_corr.values,
+                x=matrice_corr.columns,
+                y=matrice_corr.index,
+                colorscale="RdBu",
+                zmin=-1, zmax=1,
+                text=np.round(matrice_corr.values, 2),
+                texttemplate="%{text}",
+                textfont={"size": 11}
+            ))
+            fig_corr.update_layout(height=420, margin=dict(l=20, r=20, t=30, b=20))
+            st.plotly_chart(fig_corr, use_container_width=True)
+
+        with col_risk2:
+            st.subheader("📈 Metriche di Rischio e Rendimento")
+
+            # Calcoli Metriche
+            num_giorni_tot = (dati_risk.index[-1] - dati_risk.index[0]).days
+            cagr = ((dati_risk.iloc[-1] / dati_risk.iloc[0]) ** (365.25 / num_giorni_tot)) - 1
+            volatilità = rendimenti.std() * np.sqrt(252)
+            sharpe = (cagr - rf_rate) / volatilità
+
+            # Max Drawdown
+            cum_returns = (1 + rendimenti).cumprod()
+            peak = cum_returns.cummax()
+            drawdown = (cum_returns - peak) / peak
+            max_dd = drawdown.min()
+
+            df_metrics = pd.DataFrame({
+                "CAGR (% Anno)": cagr * 100,
+                "Volatilità (% Anno)": volatilità * 100,
+                "Sharpe Ratio": sharpe,
+                "Max Drawdown (%)": max_dd * 100
+            }).sort_values(by="Sharpe Ratio", ascending=False)
+
+            st.dataframe(
+                df_metrics.style.format({
+                    "CAGR (% Anno)": "{:+.2f}%",
+                    "Volatilità (% Anno)": "{:.2f}%",
+                    "Sharpe Ratio": "{:.2f}",
+                    "Max Drawdown (%)": "{:+.2f}%"
+                }),
+                use_container_width=True
+            )
+
+            st.info(
+                "💡 **Guida Rapida all'Interpretazione:**\n"
+                "- **Correlazione (< 0.3):** Valori bassi indicano buona diversificazione.\n"
+                "- **Sharpe Ratio (> 1.0):** Valore eccellente; la remunerazione del rischio è elevata.\n"
+                "- **Max Drawdown:** Indica la massima perdita teorica sofferta dal punto più alto."
+            )
+
+
+# ==============================================================================
+# TAB 4 & 5: PLACEHOLDER PER PROGETTI FUTURI
+# ==============================================================================
 with tab4:
     st.header("📈 Simulatore PAC & Monte Carlo")
     st.info("Questa funzionalità verrà sviluppata nello Step successivo!")
