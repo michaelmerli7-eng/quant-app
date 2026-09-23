@@ -31,7 +31,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "⚡ Rotazione Momentum", 
     "⚖️ Ribilanciamento Portafoglio", 
     "📊 Rischio & Correlazione", 
-    "📈 Simulatore PAC (In Sviluppo)", 
+    "📈 Simulatore PAC & Backtest", 
     "🔍 Market Scanner (In Sviluppo)"
 ])
 
@@ -270,20 +270,15 @@ with tab3:
         st.warning("Seleziona almeno 2 strumenti nella barra laterale per calcolare correlazione e rischio.")
     else:
         dati_risk_full = carica_dati(tickers_risk_list)
-        
-        # Filtra dati per il periodo selezionato
         giorni_filtro = anni_rischio * 252
         dati_risk = dati_risk_full.iloc[-giorni_filtro:]
 
-        # Calcolo rendimenti giornalieri
         rendimenti = dati_risk.pct_change().dropna()
 
-        # Mappatura nomi trasparenti
         inv_map_risk = {v: k for k, v in tickers_risk_dict.items()}
         rendimenti.columns = [inv_map_risk.get(col, col) for col in rendimenti.columns]
         dati_risk.columns = [inv_map_risk.get(col, col) for col in dati_risk.columns]
 
-        # 1. Matrice di Correlazione
         matrice_corr = rendimenti.corr()
 
         col_risk1, col_risk2 = st.columns([1.3, 1.7])
@@ -307,13 +302,11 @@ with tab3:
         with col_risk2:
             st.subheader("📈 Metriche di Rischio e Rendimento")
 
-            # Calcoli Metriche
             num_giorni_tot = (dati_risk.index[-1] - dati_risk.index[0]).days
             cagr = ((dati_risk.iloc[-1] / dati_risk.iloc[0]) ** (365.25 / num_giorni_tot)) - 1
             volatilità = rendimenti.std() * np.sqrt(252)
             sharpe = (cagr - rf_rate) / volatilità
 
-            # Max Drawdown
             cum_returns = (1 + rendimenti).cumprod()
             peak = cum_returns.cummax()
             drawdown = (cum_returns - peak) / peak
@@ -345,12 +338,110 @@ with tab3:
 
 
 # ==============================================================================
-# TAB 4 & 5: PLACEHOLDER PER PROGETTI FUTURI
+# TAB 4: SIMULATORE PAC & BACKTEST
 # ==============================================================================
 with tab4:
-    st.header("📈 Simulatore PAC & Monte Carlo")
-    st.info("Questa funzionalità verrà sviluppata nello Step successivo!")
+    st.header("📈 Simulatore PAC & Backtest Storico")
+    st.markdown("Simula la crescita storica di un Piano di Accumulo (PAC) con quota iniziale e versamenti mensili sui tuoi strumenti.")
 
+    st.sidebar.subheader("⚙️ Configurazione PAC")
+    capitale_iniziale = st.sidebar.number_input("Capitale Iniziale (€):", min_value=0.0, value=2000.0, step=500.0)
+    quota_mensile = st.sidebar.number_input("Versamento Mensile (€):", min_value=0.0, value=200.0, step=50.0)
+    anni_pac = st.sidebar.slider("Durata PAC (Anni):", min_value=1, max_value=20, value=5)
+
+    asset_pac_scelto = st.sidebar.selectbox(
+        "Strumento per il PAC:",
+        options=list(preset_tickers.keys()),
+        index=0
+    )
+
+    ticker_pac = preset_tickers[asset_pac_scelto]
+    dati_pac_full = carica_dati([ticker_pac])
+
+    giorni_pac = anni_pac * 252
+    dati_pac = dati_pac_full.iloc[-giorni_pac:][ticker_pac].dropna()
+
+    if len(dati_pac) < 30:
+        st.error("Dati storici insufficienti per il periodo selezionato.")
+    else:
+        df_pac = pd.DataFrame({'Prezzo': dati_pac})
+        df_pac['Mese'] = df_pac.index.to_period('M')
+
+        # Primo giorno lavorativo di ciascun mese per piazzare il versamento
+        primi_giorni_mese = df_pac.groupby('Mese').head(1).index
+
+        quote_possedute = 0.0
+        capitale_versato = 0.0
+        
+        quote_series = []
+        capitale_series = []
+
+        for date, price in dati_pac.items():
+            if date == dati_pac.index[0]:
+                if capitale_iniziale > 0:
+                    quote_possedute += capitale_iniziale / price
+                    capitale_versato += capitale_iniziale
+            elif date in primi_giorni_mese and quota_mensile > 0:
+                quote_possedute += quota_mensile / price
+                capitale_versato += quota_mensile
+
+            quote_series.append(quote_possedute)
+            capitale_series.append(capitale_versato)
+
+        df_sim = pd.DataFrame({
+            'Prezzo': dati_pac.values,
+            'Quote': quote_series,
+            'Capitale Investito': capitale_series
+        }, index=dati_pac.index)
+
+        df_sim['Valore Portafoglio'] = df_sim['Prezzo'] * df_sim['Quote']
+        df_sim['Profitto (€)'] = df_sim['Valore Portafoglio'] - df_sim['Capitale Investito']
+
+        cap_totale = df_sim['Capitale Investito'].iloc[-1]
+        valore_finale = df_sim['Valore Portafoglio'].iloc[-1]
+        profitto_totale = valore_finale - cap_totale
+        rendimento_perc = (profitto_totale / cap_totale * 100) if cap_totale > 0 else 0.0
+
+        num_anni_effettivi = (df_sim.index[-1] - df_sim.index[0]).days / 365.25
+        cagr_pac = (((valore_finale / cap_totale) ** (1 / num_anni_effettivi)) - 1) * 100 if cap_totale > 0 else 0.0
+
+        # Schede Metriche
+        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+        col_m1.metric("Capitale Investito Totale", f"{cap_totale:,.2f} €")
+        col_m2.metric("Valore Finale Accumulato", f"{valore_finale:,.2f} €")
+        col_m3.metric("Profitto Netto (€)", f"{profitto_totale:+,.2f} €", delta=f"{rendimento_perc:+.2f}%")
+        col_m4.metric("CAGR Effettivo Indicativo", f"{cagr_pac:.2f}%")
+
+        # Grafico Crescita PAC
+        fig_pac = go.Figure()
+        fig_pac.add_trace(go.Scatter(
+            x=df_sim.index, 
+            y=df_sim['Valore Portafoglio'], 
+            mode='lines', 
+            name='Valore Portafoglio (€)', 
+            line=dict(color='mediumseagreen', width=2.5)
+        ))
+        fig_pac.add_trace(go.Scatter(
+            x=df_sim.index, 
+            y=df_sim['Capitale Investito'], 
+            mode='lines', 
+            name='Capitale Investito (€)', 
+            line=dict(color='gray', dash='dash', width=2)
+        ))
+
+        fig_pac.update_layout(
+            title=f"Evoluzione del PAC su {asset_pac_scelto} ({anni_pac} Anni Storici)",
+            xaxis_title="Data",
+            yaxis_title="Valore (€)",
+            height=480,
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig_pac, use_container_width=True)
+
+
+# ==============================================================================
+# TAB 5: PLACEHOLDER PER MARKET SCANNER
+# ==============================================================================
 with tab5:
     st.header("🔍 Market Scanner")
     st.info("Questa funzionalità verrà sviluppata nello Step successivo!")
