@@ -6,7 +6,11 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # Configurazione della pagina
-st.set_page_config(page_title="Quant Finance Suite", layout="wide")
+st.set_page_config(page_title="App N. 1 - Quant Finance Suite", layout="wide")
+
+# Titolo Principale
+st.title("⚡ App N. 1: Quant Finance Suite")
+st.markdown("Piattaforma Integrata per l'Analisi e la Gestione Quantitativa del Portafoglio")
 
 # --- FUNZIONI CARICAMENTO E SCANNER DATI ---
 @st.cache_data
