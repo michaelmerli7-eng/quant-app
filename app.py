@@ -3,17 +3,104 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
 
 # Configurazione della pagina
 st.set_page_config(page_title="Quant Finance Suite", layout="wide")
 
-# --- FUNZIONE CARICAMENTO DATI ---
+# --- FUNZIONI CARICAMENTO E SCANNER DATI ---
 @st.cache_data
 def carica_dati(tickers):
     df = yf.download(tickers, period="25y")['Close'].ffill().bfill()
     return df
 
-# --- PANIERE STRUMENTI PREDEFINITI (CONDIVISO) ---
+@st.cache_data(ttl=3600)
+def esegui_market_scanner(universe_dict):
+    lista_tickers = list(universe_dict.keys())
+    dati_storici = yf.download(lista_tickers, period="1y")['Close'].ffill().bfill()
+    
+    risultati = []
+    
+    for ticker, info_base in universe_dict.items():
+        try:
+            if isinstance(dati_storici, pd.DataFrame) and ticker in dati_storici.columns:
+                s_prezzi = dati_storici[ticker].dropna()
+            elif isinstance(dati_storici, pd.Series):
+                s_prezzi = dati_storici.dropna()
+            else:
+                continue
+
+            if len(s_prezzi) < 50:
+                continue
+
+            prezzo_attuale = float(s_prezzi.iloc[-1])
+            
+            # Medie Mobili
+            sma50 = float(s_prezzi.rolling(50).mean().iloc[-1]) if len(s_prezzi) >= 50 else np.nan
+            sma200 = float(s_prezzi.rolling(200).mean().iloc[-1]) if len(s_prezzi) >= 200 else np.nan
+
+            # RSI 14
+            delta = s_prezzi.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss
+            rsi_series = 100 - (100 / (1 + rs))
+            rsi_val = float(rsi_series.iloc[-1])
+
+            # Performance
+            perf_1m = float(((prezzo_attuale / s_prezzi.iloc[-21]) - 1) * 100) if len(s_prezzi) >= 21 else 0.0
+            perf_3m = float(((prezzo_attuale / s_prezzi.iloc[-63]) - 1) * 100) if len(s_prezzi) >= 63 else 0.0
+            perf_1y = float(((prezzo_attuale / s_prezzi.iloc[0]) - 1) * 100)
+
+            # Max 52w
+            max_52w = float(s_prezzi.max())
+            dist_max52w = float(((prezzo_attuale - max_52w) / max_52w) * 100)
+
+            # Dati Fondamentali via yf.Ticker
+            pe_ratio = np.nan
+            div_yield = 0.0
+            mcap_mld = 0.0
+            settore = info_base.get("Type", "N/A")
+
+            try:
+                t_obj = yf.Ticker(ticker)
+                inf = t_obj.info
+                mcap_mld = float((inf.get('marketCap', 0) or 0) / 1e9)
+                pe_val = inf.get('trailingPE', None)
+                if pe_val is not None and not np.isnan(pe_val):
+                    pe_ratio = float(pe_val)
+                div_val = inf.get('dividendYield', 0) or 0
+                div_yield = float(div_val * 100) if div_val < 1 else float(div_val)
+                settore = str(inf.get('sector', info_base.get('Type', 'N/A')))
+            except:
+                pass
+
+            risultati.append({
+                "Ticker": ticker,
+                "Nome": info_base["Name"],
+                "Tipo": info_base["Type"],
+                "Prezzo": prezzo_attuale,
+                "Perf 1M (%)": perf_1m,
+                "Perf 3M (%)": perf_3m,
+                "Perf 1Y (%)": perf_1y,
+                "RSI (14)": rsi_val,
+                "SMA 50": sma50,
+                "SMA 200": sma200,
+                "Sopra SMA50": prezzo_attuale > sma50 if not np.isnan(sma50) else False,
+                "Sopra SMA200": prezzo_attuale > sma200 if not np.isnan(sma200) else False,
+                "Dist. Max 52W (%)": dist_max52w,
+                "P/E": pe_ratio,
+                "Div Yield (%)": div_yield,
+                "Market Cap (Mld)": mcap_mld,
+                "Settore": settore
+            })
+        except Exception:
+            continue
+            
+    return pd.DataFrame(risultati)
+
+
+# --- PANIERE STRUMENTI PREDEFINITI ---
 preset_tickers = {
     "Azioni Globali (SWDA.MI)": "SWDA.MI",
     "Oro (GLD)": "GLD",
@@ -21,6 +108,26 @@ preset_tickers = {
     "Obbligazioni Globali (AGGH.MI)": "AGGH.MI",
     "S&P 500 (CSSPX.MI)": "CSSPX.MI",
     "Tech / Nasdaq (EQQQ.MI)": "EQQQ.MI"
+}
+
+# Universo per il Market Scanner
+universe_scanner = {
+    "SWDA.MI": {"Name": "iShares Core MSCI World", "Type": "ETF"},
+    "CSSPX.MI": {"Name": "iShares Core S&P 500", "Type": "ETF"},
+    "EQQQ.MI": {"Name": "Invesco EQQQ Nasdaq-100", "Type": "ETF"},
+    "AGGH.MI": {"Name": "iShares Core Global Aggregate", "Type": "ETF"},
+    "GLD": {"Name": "SPDR Gold Shares", "Type": "Commodity"},
+    "BTC-USD": {"Name": "Bitcoin USD", "Type": "Crypto"},
+    "AAPL": {"Name": "Apple Inc.", "Type": "Azione"},
+    "MSFT": {"Name": "Microsoft Corp.", "Type": "Azione"},
+    "NVDA": {"Name": "NVIDIA Corp.", "Type": "Azione"},
+    "AMZN": {"Name": "Amazon.com Inc.", "Type": "Azione"},
+    "GOOGL": {"Name": "Alphabet Inc.", "Type": "Azione"},
+    "RACE.MI": {"Name": "Ferrari N.V.", "Type": "Azione"},
+    "NKE": {"Name": "Nike Inc.", "Type": "Azione"},
+    "DUOL": {"Name": "Duolingo Inc.", "Type": "Azione"},
+    "ZTS": {"Name": "Zoetis Inc.", "Type": "Azione"},
+    "TSLA": {"Name": "Tesla Inc.", "Type": "Azione"}
 }
 
 st.title("⚡ Quant Finance Suite")
@@ -32,7 +139,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "⚖️ Ribilanciamento Portafoglio", 
     "📊 Rischio & Correlazione", 
     "📈 Simulatore PAC & Backtest", 
-    "🔍 Market Scanner (In Sviluppo)"
+    "🔍 Market Scanner"
 ])
 
 # ==============================================================================
@@ -367,7 +474,6 @@ with tab4:
         df_pac = pd.DataFrame({'Prezzo': dati_pac})
         df_pac['Mese'] = df_pac.index.to_period('M')
 
-        # Primo giorno lavorativo di ciascun mese per piazzare il versamento
         primi_giorni_mese = df_pac.groupby('Mese').head(1).index
 
         quote_possedute = 0.0
@@ -405,14 +511,12 @@ with tab4:
         num_anni_effettivi = (df_sim.index[-1] - df_sim.index[0]).days / 365.25
         cagr_pac = (((valore_finale / cap_totale) ** (1 / num_anni_effettivi)) - 1) * 100 if cap_totale > 0 else 0.0
 
-        # Schede Metriche
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         col_m1.metric("Capitale Investito Totale", f"{cap_totale:,.2f} €")
         col_m2.metric("Valore Finale Accumulato", f"{valore_finale:,.2f} €")
         col_m3.metric("Profitto Netto (€)", f"{profitto_totale:+,.2f} €", delta=f"{rendimento_perc:+.2f}%")
         col_m4.metric("CAGR Effettivo Indicativo", f"{cagr_pac:.2f}%")
 
-        # Grafico Crescita PAC
         fig_pac = go.Figure()
         fig_pac.add_trace(go.Scatter(
             x=df_sim.index, 
@@ -440,8 +544,106 @@ with tab4:
 
 
 # ==============================================================================
-# TAB 5: PLACEHOLDER PER MARKET SCANNER
+# TAB 5: MARKET SCANNER (FILTRI TECNICI & FONDAMENTALI)
 # ==============================================================================
 with tab5:
-    st.header("🔍 Market Scanner")
-    st.info("Questa funzionalità verrà sviluppata nello Step successivo!")
+    st.header("🔍 Market Scanner (Filtri Tecnici & Fondamentali)")
+    st.markdown("Filtra e analizza gli strumenti finanziari per indicatori di forza relativa (RSI, Medie Mobili) e metriche di valutazione (P/E, Dividendi).")
+
+    with st.spinner("Scansione di mercato e calcolo indicatori in corso..."):
+        df_scan = esegui_market_scanner(universe_scanner)
+
+    if df_scan.empty:
+        st.warning("Impossibile caricare i dati dello scanner in questo momento.")
+    else:
+        # --- FILTRI SULLA SIDEBAR / INTERFACCIA ---
+        st.sidebar.subheader("🔍 Filtri Market Scanner")
+
+        tipi_disponibili = list(df_scan["Tipo"].unique())
+        tipi_selezionati = st.sidebar.multiselect("Asset Class / Tipo:", options=tipi_disponibili, default=tipi_disponibili)
+
+        rsi_min, rsi_max = st.sidebar.slider("Range RSI (14):", min_value=0, max_value=100, value=(0, 100))
+
+        filtro_ma = st.sidebar.selectbox(
+            "Filtro Trend (Medie Mobili):",
+            ["Tutti", "Prezzo > SMA 50", "Prezzo > SMA 200", "Prezzo > Entrambe (Uptrend Forte)"]
+        )
+
+        max_pe = st.sidebar.slider("P/E Ratio Massimo (0 = nessun filtro):", min_value=0, max_value=100, value=0)
+        min_div = st.sidebar.number_input("Dividend Yield Minimo (%):", min_value=0.0, max_value=10.0, value=0.0, step=0.5)
+
+        # --- APPLICAZIONE FILTRI ---
+        df_filtered = df_scan[df_scan["Tipo"].isin(tipi_selezionati)].copy()
+        df_filtered = df_filtered[(df_filtered["RSI (14)"] >= rsi_min) & (df_filtered["RSI (14)"] <= rsi_max)]
+
+        if filtro_ma == "Prezzo > SMA 50":
+            df_filtered = df_filtered[df_filtered["Sopra SMA50"]]
+        elif filtro_ma == "Prezzo > SMA 200":
+            df_filtered = df_filtered[df_filtered["Sopra SMA200"]]
+        elif filtro_ma == "Prezzo > Entrambe (Uptrend Forte)":
+            df_filtered = df_filtered[df_filtered["Sopra SMA50"] & df_filtered["Sopra SMA200"]]
+
+        if max_pe > 0:
+            df_filtered = df_filtered[(df_filtered["P/E"].isna()) | (df_filtered["P/E"] <= max_pe)]
+
+        if min_div > 0:
+            df_filtered = df_filtered[df_filtered["Div Yield (%)"] >= min_div]
+
+        # --- METRICHE IN EVIDENZA ---
+        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+        col_s1.metric("Asset Trovati", f"{len(df_filtered)} / {len(df_scan)}")
+        col_s2.metric("Media RSI (Filtro)", f"{df_filtered['RSI (14)'].mean():.1f}" if not df_filtered.empty else "N/A")
+        
+        uptrend_count = len(df_filtered[df_filtered['Sopra SMA50'] & df_filtered['Sopra SMA200']]) if not df_filtered.empty else 0
+        col_s3.metric("Asset in Uptrend Forte", f"{uptrend_count}")
+
+        ipervenduti_count = len(df_filtered[df_filtered['RSI (14)'] < 30]) if not df_filtered.empty else 0
+        col_s4.metric("Asset Ipervenduti (RSI < 30)", f"{ipervenduti_count}")
+
+        st.markdown("---")
+
+        col_tab, col_chart = st.columns([1.3, 1])
+
+        with col_tab:
+            st.subheader("📋 Risultati dello Screening")
+            
+            # Formattazione per la visualizzazione
+            df_disp = df_filtered.copy()
+            df_disp["Stato Trend"] = df_disp.apply(
+                lambda row: "🟢 Uptrend Forte" if row["Sopra SMA50"] and row["Sopra SMA200"] 
+                else ("🟡 Uptrend Moderato" if row["Sopra SMA50"] else "🔴 Downtrend"), axis=1
+            )
+
+            st.dataframe(
+                df_disp[["Ticker", "Nome", "Tipo", "Prezzo", "RSI (14)", "Perf 3M (%)", "P/E", "Div Yield (%)", "Stato Trend"]],
+                use_container_width=True,
+                column_config={
+                    "Prezzo": st.column_config.NumberColumn(format="%.2f"),
+                    "RSI (14)": st.column_config.NumberColumn(format="%.1f"),
+                    "Perf 3M (%)": st.column_config.NumberColumn(format="%+.2f %%"),
+                    "P/E": st.column_config.NumberColumn(format="%.1f"),
+                    "Div Yield (%)": st.column_config.NumberColumn(format="%.2f %%"),
+                }
+            )
+
+        with col_chart:
+            st.subheader("🎯 Matrice RSI vs Performance (3 Mesi)")
+            if not df_filtered.empty:
+                fig_scatter = px.scatter(
+                    df_filtered,
+                    x="RSI (14)",
+                    y="Perf 3M (%)",
+                    text="Ticker",
+                    color="Tipo",
+                    size="Div Yield (%)",
+                    size_max=20,
+                    hover_name="Nome",
+                    title="Mappa Opportunità: RSI vs Momentum a 3 Mesi"
+                )
+                fig_scatter.add_vline(x=30, line_dash="dash", line_color="green", annotation_text="Ipervenduto")
+                fig_scatter.add_vline(x=70, line_dash="dash", line_color="red", annotation_text="Ipercomprato")
+                fig_scatter.update_traces(textposition='top center')
+                fig_scatter.update_layout(height=450, margin=dict(l=20, r=20, t=40, b=20))
+                st.plotly_chart(fig_scatter, use_container_width=True)
+            else:
+                st.info("Nessuno strumento soddisfa i filtri impostati.")
